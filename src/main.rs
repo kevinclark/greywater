@@ -1,21 +1,28 @@
 use std::{env, sync::Arc, time::*};
 
+
 use anyhow::{bail, Result};
 
+use embedded_hal::prelude::_embedded_hal_blocking_delay_DelayMs;
 use log::*;
+
+
+use embedded_hal::digital::v2::*;
+use embedded_hal::blocking::delay::DelayUs;
 
 use embedded_svc::ipv4;
 use embedded_svc::ping::Ping;
 use embedded_svc::wifi::*;
+
+use esp_idf_hal::prelude::*;
+use esp_idf_hal::gpio::*;
+use esp_idf_hal::delay;
 
 use esp_idf_svc::netif::*;
 use esp_idf_svc::nvs::*;
 use esp_idf_svc::ping;
 use esp_idf_svc::sysloop::*;
 use esp_idf_svc::wifi::*;
-
-
-
 
 const SSID: &str = env!("DISTANCE_SSID");
 const PASS: &str = env!("DISTANCE_PASS");
@@ -29,7 +36,40 @@ fn main() -> Result<()> {
     let sys_loop_stack = Arc::new(EspSysLoopStack::new()?);
     let default_nvs = Arc::new(EspDefaultNvs::new()?);
 
-    let wifi = wifi(netif_stack.clone(), sys_loop_stack.clone(), default_nvs.clone());
+    let _wifi =
+        wifi(netif_stack.clone(), sys_loop_stack.clone(), default_nvs.clone())
+            .expect("Wifi setup");
+
+    let peripherals = Peripherals::take().expect("Peripheral init");
+
+    let mut delay = delay::Ets;
+    let mut trig = peripherals.pins.gpio0.into_output()?;
+    let echo = peripherals.pins.gpio1.into_input()?.into_pull_down()?;
+
+    // Just let things settle
+    delay.delay_ms(10u8);
+    println!("Starting distance");
+
+    loop {
+        trig.set_high().expect("Starting trigger pulse");
+        delay.delay_us(10u8);
+        trig.set_low().expect("Ending trigger pulse");
+
+        while echo.is_low()? {}
+
+        let start = SystemTime::now();
+
+        while echo.is_high()? {}
+
+        let end = SystemTime::now();
+
+        let micros = end.duration_since(start)?.as_micros();
+        println!("{}us {}cm", micros, micros / 58);
+
+        delay.delay_ms(1000u16);
+    }
+
+
 
     Ok(())
 }

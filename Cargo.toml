@@ -16,8 +16,10 @@ opt-level = "z"
 pio = ["esp-idf-sys/pio"]
 
 [dependencies]
-esp-idf-sys = { version = "0.31.5", features = ["binstart"] }
 embedded-svc = "0.21"
+embedded-hal = "0.2"
+esp-idf-sys = { version = "0.31.5", features = ["binstart"] }
+esp-idf-hal = "0.37"
 esp-idf-svc = "0.41"
 log = "0.4"
 anyhow = "1"
