@@ -23,6 +23,7 @@ esp-idf-hal = "0.37"
 esp-idf-svc = "0.41"
 log = "0.4"
 anyhow = "1"
+heapless = "0.7"
 
 [build-dependencies]
 embuild = "0.29"
