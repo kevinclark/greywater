@@ -85,7 +85,7 @@ fn main() -> ! {
 
     let mut filter: Filter<f32, U5> = Filter::new();
 
-    let mut periodic_timer = EspTimerService::new().unwrap().timer(move || {
+    let mut periodic = EspTimerService::new().expect("Setting timer service").timer(move || {
         for _ in 0..5 {
             filter.consume(distance_in_cms());
             delay.delay_ms(100u8);
@@ -94,7 +94,7 @@ fn main() -> ! {
         println!("Median: {}", filter.median());
     }).expect("Periodic timer setup");
 
-    periodic_timer.every(Duration::from_secs(10)).unwrap();
+    periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
 
     loop { }
 }
