@@ -10,14 +10,15 @@ use log::*;
 use embedded_hal::digital::v2::*;
 use embedded_hal::blocking::delay::DelayUs;
 
-use embedded_svc::sys_time::SystemTime;
-
 use esp_idf_hal::prelude::*;
 use esp_idf_hal::gpio::*;
 use esp_idf_hal::delay;
 
-use esp_idf_svc::systime::EspSystemTime;
+use embedded_svc::sys_time::SystemTime;
+use embedded_svc::timer::*;
 
+use esp_idf_svc::systime::EspSystemTime;
+use esp_idf_svc::timer::*;
 
 use generic_array::typenum::U5;
 use median::stack::Filter;
@@ -42,6 +43,7 @@ fn main() -> ! {
         .unwrap();
 
     let mut delay = delay::Ets;
+
     let (mut tx, mut rx) = unsafe { Q.split() };
 
     unsafe {
@@ -83,15 +85,17 @@ fn main() -> ! {
 
     let mut filter: Filter<f32, U5> = Filter::new();
 
-    loop {
+    let mut periodic_timer = EspTimerService::new().unwrap().timer(move || {
         for _ in 0..5 {
             filter.consume(distance_in_cms());
             delay.delay_ms(100u8);
         }
 
         println!("Median: {}", filter.median());
+    }).expect("Periodic timer setup");
 
-        delay.delay_ms(1000u16);
-    }
+    periodic_timer.every(Duration::from_secs(10)).unwrap();
+
+    loop { }
 }
 
