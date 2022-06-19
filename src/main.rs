@@ -10,18 +10,17 @@ use log::*;
 use embedded_hal::digital::v2::*;
 use embedded_hal::blocking::delay::DelayUs;
 
-use embedded_svc::event_bus::{EventBus, Postbox};
 use embedded_svc::sys_time::SystemTime;
 
 use esp_idf_hal::prelude::*;
 use esp_idf_hal::gpio::*;
 use esp_idf_hal::delay;
 
-use esp_idf_svc::eventloop::*;
 use esp_idf_svc::systime::EspSystemTime;
 
-use esp_idf_sys::c_types;
 
+use generic_array::typenum::U5;
+use median::stack::Filter;
 use heapless::spsc::Queue;
 
 static mut Q: Queue<Duration, 2> = Queue::new();
@@ -31,8 +30,6 @@ fn main() -> ! {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     let peripherals = Peripherals::take().expect("Peripheral init");
-
-    let mut delay = delay::Ets;
 
     let mut trig = peripherals.pins.gpio0
         .into_output()
@@ -44,6 +41,7 @@ fn main() -> ! {
         .into_pull_down()
         .unwrap();
 
+    let mut delay = delay::Ets;
     let (mut tx, mut rx) = unsafe { Q.split() };
 
     unsafe {
@@ -63,7 +61,9 @@ fn main() -> ! {
         unsafe { rx.dequeue_unchecked() }
     };
 
-    loop {
+    let mut distance_in_cms = move || {
+        let mut delay = delay::Ets;
+
         debug!("Starting trigger pulse");
         trig.set_high().expect("Starting trigger pulse");
         delay.delay_us(10u8);
@@ -75,12 +75,23 @@ fn main() -> ! {
         let end = blocking_deque();
         debug!("Got end: {:?}", end);
 
-        println!("{}cm", (end - start).as_micros() / 58);
+        let raw = (end - start).as_micros() as f32 / 58.0;
+        println!("Raw: {}", raw);
+
+        raw
+    };
+
+    let mut filter: Filter<f32, U5> = Filter::new();
+
+    loop {
+        for _ in 0..5 {
+            filter.consume(distance_in_cms());
+            delay.delay_ms(100u8);
+        }
+
+        println!("Median: {}", filter.median());
 
         delay.delay_ms(1000u16);
     }
 }
 
-struct Ultrasonic {
-
-}
