@@ -1,12 +1,9 @@
 use std::time::*;
 
-
-use anyhow::Result;
-
-use embedded_hal::prelude::*;
 use log::*;
 
 
+use embedded_hal::prelude::*;
 use embedded_hal::digital::v2::*;
 use embedded_hal::blocking::delay::DelayUs;
 
@@ -29,6 +26,7 @@ static mut Q: Queue<Duration, 2> = Queue::new();
 fn main() -> ! {
 
     esp_idf_svc::log::EspLogger::initialize_default();
+
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
@@ -78,7 +76,7 @@ fn main() -> ! {
         debug!("Got end: {:?}", end);
 
         let raw = (end - start).as_micros() as f32 / 58.0;
-        println!("Raw: {}", raw);
+        debug!("Raw: {}", raw);
 
         raw
     };
@@ -91,7 +89,7 @@ fn main() -> ! {
             delay.delay_ms(100u8);
         }
 
-        println!("Median: {}", filter.median());
+        print!("Median: {}", filter.median());
     }).expect("Periodic timer setup");
 
     periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
