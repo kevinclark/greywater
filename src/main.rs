@@ -12,11 +12,14 @@ use esp_idf_hal::prelude::*;
 use esp_idf_hal::gpio::*;
 use esp_idf_hal::delay;
 
+
 use embedded_svc::sys_time::SystemTime;
 use embedded_svc::timer::*;
 use embedded_svc::ipv4;
 use embedded_svc::ping::Ping;
 use embedded_svc::wifi::*;
+use embedded_svc::mqtt::client::{Connection, Publish, QoS};
+
 
 use esp_idf_svc::systime::EspSystemTime;
 use esp_idf_svc::timer::*;
@@ -25,14 +28,15 @@ use esp_idf_svc::nvs::*;
 use esp_idf_svc::ping;
 use esp_idf_svc::sysloop::*;
 use esp_idf_svc::wifi::*;
-
+use esp_idf_svc::mqtt::client::*;
 
 use generic_array::typenum::U5;
 use median::stack::Filter;
 use heapless::spsc::Queue;
 
-const SSID: &str = env!("DISTANCE_SSID");
-const PASS: &str = env!("DISTANCE_PASS");
+const SSID: &str = env!("GREYWATER_WIFI_SSID");
+const PASS: &str = env!("GREYWATER_WIFI_PASS");
+const MQTT: &str = env!("GREYWATER_MQTT");
 
 static mut Q: Queue<Duration, 2> = Queue::new();
 
@@ -45,6 +49,28 @@ fn main() -> Result<()> {
     let default_nvs = Arc::new(EspDefaultNvs::new()?);
 
     let _wifi = wifi(netif_stack.clone(), sys_loop_stack.clone(), default_nvs.clone());
+
+    let mqtt_conf = MqttClientConfiguration {
+        client_id: Some("greywater"),
+
+        ..Default::default()
+    };
+
+    let (mut mqtt_client, mut mqtt_conn) = EspMqttClient::new_with_conn(MQTT, &mqtt_conf)?;
+
+    std::thread::spawn(move || {
+        debug!("MQTT Listening for messages");
+
+        while let Some(msg) = mqtt_conn.next() {
+            match msg {
+                Err(e) => debug!("MQTT Message ERROR: {}", e),
+                Ok(msg) => debug!("MQTT Message: {:?}", msg),
+            }
+        }
+
+        debug!("MQTT connection loop exit");
+    });
+
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
@@ -73,6 +99,17 @@ fn main() -> Result<()> {
     // Just let things settle
     delay.delay_ms(10u8);
     info!("Starting distance");
+
+    let mut publish_distance = move |distance: f32| {
+        debug!("Publishing to mqtt");
+        mqtt_client.publish(
+            "greywater/clear",
+            QoS::AtMostOnce,
+            false,
+            &distance.to_be_bytes()[..],
+        ).unwrap();
+        debug!("done publishing")
+    };
 
     let mut blocking_deque = move || {
         while !rx.ready() {}
@@ -107,7 +144,10 @@ fn main() -> Result<()> {
             delay.delay_ms(100u8);
         }
 
-        info!("Median: {}", filter.median());
+        let distance = filter.median();
+
+        info!("Median: {}", distance);
+        publish_distance(distance)
     }).expect("Periodic timer setup");
 
     periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
