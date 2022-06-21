@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::*;
 
+use heapless::spsc::Consumer;
 use log::*;
 use anyhow::{bail, Result};
 
@@ -38,17 +39,13 @@ const SSID: &str = env!("GREYWATER_WIFI_SSID");
 const PASS: &str = env!("GREYWATER_WIFI_PASS");
 const MQTT: &str = env!("GREYWATER_MQTT");
 
-static mut Q: Queue<Duration, 2> = Queue::new();
+static mut CLEARWATER_QUEUE: Queue<Duration, 2> = Queue::new();
 
 fn main() -> Result<()> {
 
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    let netif_stack = Arc::new(EspNetifStack::new()?);
-    let sys_loop_stack = Arc::new(EspSysLoopStack::new()?);
-    let default_nvs = Arc::new(EspDefaultNvs::new()?);
-
-    let _wifi = wifi(netif_stack.clone(), sys_loop_stack.clone(), default_nvs.clone());
+    let _wifi = init_wifi();
 
     let mqtt_conf = MqttClientConfiguration {
         client_id: Some("greywater"),
@@ -74,11 +71,12 @@ fn main() -> Result<()> {
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
-    let mut trig = peripherals.pins.gpio0
+    let clearwater_trig = peripherals.pins.gpio0
         .into_output()
-        .unwrap();
+        .unwrap()
+        .degrade();
 
-    let echo = peripherals.pins.gpio1
+    let clearwater_echo = peripherals.pins.gpio1
         .into_input()
         .unwrap()
         .into_pull_down()
@@ -86,21 +84,23 @@ fn main() -> Result<()> {
 
     let mut delay = delay::Ets;
 
-    let (mut tx, mut rx) = unsafe { Q.split() };
+    let (mut clearwater_tx, clearwater_rx) = unsafe { CLEARWATER_QUEUE.split() };
 
     unsafe {
-        echo.into_subscribed(move ||{
+        clearwater_echo.into_subscribed(move ||{
             let now = EspSystemTime {}.now();
-            tx.enqueue(now).expect("Enqueuing time");
+            clearwater_tx.enqueue(now).expect("Enqueuing time");
         }, InterruptType::AnyEdge)
             .expect("Edge handler");
     }
+
+    let mut clearwater_sensor = UltrasonicSensor { tx: clearwater_trig, rx: clearwater_rx };
 
     // Just let things settle
     delay.delay_ms(10u8);
     info!("Starting distance");
 
-    let mut publish_distance = move |distance: f32| {
+    let mut publish_clear_tank = move |distance: f32| {
         debug!("Publishing to mqtt");
         mqtt_client.publish(
             "greywater/clear",
@@ -111,19 +111,46 @@ fn main() -> Result<()> {
         debug!("done publishing")
     };
 
-    let mut blocking_deque = move || {
-        while !rx.ready() {}
-        unsafe { rx.dequeue_unchecked() }
-    };
+    let mut filter: Filter<f32, U5> = Filter::new();
 
-    let mut distance_in_cms = move || {
+    let mut periodic = EspTimerService::new().expect("Setting timer service").timer(move || {
+        for _ in 0..5 {
+            filter.consume(clearwater_sensor.distance_in_cms());
+            delay.delay_ms(100u8);
+        }
+
+        let distance = filter.median();
+
+        info!("Median: {}", distance);
+        publish_clear_tank(distance)
+    }).expect("Periodic timer setup");
+
+    periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
+
+    loop { }
+
+    Ok(())
+}
+
+struct UltrasonicSensor {
+    tx: GpioPin<Output>,
+    rx: Consumer<'static, Duration, 2>
+}
+
+impl UltrasonicSensor {
+    fn distance_in_cms(&mut self) -> f32 {
         let mut delay = delay::Ets;
 
         debug!("Starting trigger pulse");
-        trig.set_high().expect("Starting trigger pulse");
+        self.tx.set_high().expect("Starting trigger pulse");
         delay.delay_us(10u8);
-        trig.set_low().expect("Ending trigger pulse");
+        self.tx.set_low().expect("Ending trigger pulse");
         debug!("Pulse done.");
+
+        let mut blocking_deque = move || {
+            while !self.rx.ready() {}
+            unsafe { self.rx.dequeue_unchecked() }
+        };
 
         let start = blocking_deque();
         debug!("Got start: {:?}", start);
@@ -134,34 +161,15 @@ fn main() -> Result<()> {
         debug!("Raw: {}", raw);
 
         raw
-    };
-
-    let mut filter: Filter<f32, U5> = Filter::new();
-
-    let mut periodic = EspTimerService::new().expect("Setting timer service").timer(move || {
-        for _ in 0..5 {
-            filter.consume(distance_in_cms());
-            delay.delay_ms(100u8);
-        }
-
-        let distance = filter.median();
-
-        info!("Median: {}", distance);
-        publish_distance(distance)
-    }).expect("Periodic timer setup");
-
-    periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
-
-    loop { }
-
-    Ok(())
+    }
 }
 
-fn wifi(
-    netif_stack: Arc<EspNetifStack>,
-    sys_loop_stack: Arc<EspSysLoopStack>,
-    default_nvs: Arc<EspDefaultNvs>,
-) -> Result<Box<EspWifi>> {
+
+fn init_wifi() -> Result<Box<EspWifi>> {
+    let netif_stack = Arc::new(EspNetifStack::new()?);
+    let sys_loop_stack = Arc::new(EspSysLoopStack::new()?);
+    let default_nvs = Arc::new(EspDefaultNvs::new()?);
+
     let mut wifi = Box::new(EspWifi::new(netif_stack, sys_loop_stack, default_nvs)?);
 
     info!("Wifi created, about to scan");
