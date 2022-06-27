@@ -102,12 +102,14 @@ fn main() -> Result<()> {
 
     let mut publish_clear_tank = move |distance: f32| {
         debug!("Publishing to mqtt");
+
         mqtt_client.publish(
-            "greywater/clear",
+            "greywater/clean-tank",
             QoS::AtMostOnce,
             false,
-            &distance.to_be_bytes()[..],
+            format!("{{ \"raw_distance\": {} }}", distance).as_bytes(),
         ).unwrap();
+
         debug!("done publishing")
     };
 
