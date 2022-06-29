@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::*;
 
+use embedded_svc::mqtt::client::MessageId;
 use embedded_svc::mqtt::client::MessageImpl;
 use embedded_svc::mqtt::client::utils::ConnState;
 use esp_idf_sys::EspError;
@@ -194,11 +195,19 @@ impl SensorDataPublisher {
         Ok(SensorDataPublisher { mqtt_client, listener_handle })
     }
 
-    fn publish_clear_tank(&mut self, distance: f32) -> Result<u32> {
-        debug!("Publishing to mqtt");
+    fn publish_clear_tank(&mut self, distance: f32) -> Result<MessageId> {
+        self.publish("greywater/clean-tank", distance)
+    }
+
+    fn publish_bioreactor(&mut self, distance: f32) -> Result<MessageId> {
+        self.publish("greywater/bioreactor", distance)
+    }
+
+    fn publish(&mut self, topic: &str, distance: f32) -> Result<MessageId> {
+        debug!("Publishing to mqtt topic: {}", topic);
 
         let result = self.mqtt_client.publish(
-            "greywater/clean-tank",
+            topic,
             QoS::AtMostOnce,
             false,
             format!("{{ \"raw_distance\": {} }}", distance).as_bytes(),
