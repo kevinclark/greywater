@@ -145,11 +145,9 @@ struct UltrasonicSensor {
 
 impl UltrasonicSensor {
     fn distance_in_cms(&mut self) -> f32 {
-        let mut delay = delay::Ets;
-
         debug!("Starting trigger pulse");
         self.tx.set_high().expect("Starting trigger pulse");
-        delay.delay_us(10u8);
+        delay::Ets.delay_us(10u8);
         self.tx.set_low().expect("Ending trigger pulse");
         debug!("Pulse done.");
 
