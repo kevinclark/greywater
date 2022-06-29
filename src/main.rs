@@ -1,6 +1,9 @@
 use std::sync::Arc;
 use std::time::*;
 
+use embedded_svc::mqtt::client::MessageImpl;
+use embedded_svc::mqtt::client::utils::ConnState;
+use esp_idf_sys::EspError;
 use heapless::spsc::Consumer;
 use log::*;
 use anyhow::{bail, Result};
@@ -39,7 +42,8 @@ const SSID: &str = env!("GREYWATER_WIFI_SSID");
 const PASS: &str = env!("GREYWATER_WIFI_PASS");
 const MQTT: &str = env!("GREYWATER_MQTT");
 
-static mut CLEARWATER_QUEUE: Queue<Duration, 2> = Queue::new();
+static mut CLEAN_TANK_QUEUE: Queue<Duration, 2> = Queue::new();
+static mut BIOREACTOR_TANK_QUEUE: Queue<Duration, 2> = Queue::new();
 
 fn main() -> Result<()> {
 
@@ -47,71 +51,71 @@ fn main() -> Result<()> {
 
     let _wifi = init_wifi();
 
-    let mqtt_conf = MqttClientConfiguration {
+    let mut publisher = SensorDataPublisher::connect(MQTT, &MqttClientConfiguration {
         client_id: Some("greywater"),
 
         ..Default::default()
-    };
+    })?;
 
-    let (mut mqtt_client, mut mqtt_conn) = EspMqttClient::new_with_conn(MQTT, &mqtt_conf)?;
-
-    std::thread::spawn(move || {
-        debug!("MQTT Listening for messages");
-
-        while let Some(msg) = mqtt_conn.next() {
-            match msg {
-                Err(e) => debug!("MQTT Message ERROR: {}", e),
-                Ok(msg) => debug!("MQTT Message: {:?}", msg),
-            }
-        }
-
-        debug!("MQTT connection loop exit");
-    });
+    let (mut clearwater_tx, clearwater_rx) = unsafe { CLEAN_TANK_QUEUE.split() };
+    let (mut bioreactor_tx, bioreactor_rx) = unsafe { BIOREACTOR_TANK_QUEUE.split() };
 
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
-    let clearwater_trig = peripherals.pins.gpio0
-        .into_output()
-        .unwrap()
-        .degrade();
+    let mut clearwater_sensor = {
+        let clearwater_trig = peripherals.pins.gpio0
+            .into_output()
+            .unwrap()
+            .degrade();
 
-    let clearwater_echo = peripherals.pins.gpio1
-        .into_input()
-        .unwrap()
-        .into_pull_down()
-        .unwrap();
+        let clearwater_echo = peripherals.pins.gpio1
+            .into_input()
+            .unwrap()
+            .into_pull_down()
+            .unwrap();
+
+        unsafe {
+            clearwater_echo.into_subscribed(move ||{
+                let now = EspSystemTime {}.now();
+                clearwater_tx.enqueue(now).expect("Enqueuing time");
+            }, InterruptType::AnyEdge)
+                .expect("Edge handler");
+        }
+
+        UltrasonicSensor { tx: clearwater_trig, rx: clearwater_rx }
+    };
+
+    let mut bioreactor_sensor = {
+
+        let bioreactor_trig = peripherals.pins.gpio2
+            .into_output()
+            .unwrap()
+            .degrade();
+
+        let bioreactor_echo = peripherals.pins.gpio3
+            .into_input()
+            .unwrap()
+            .into_pull_down()
+            .unwrap();
+
+
+        unsafe {
+            bioreactor_echo.into_subscribed(move ||{
+                let now = EspSystemTime {}.now();
+                bioreactor_tx.enqueue(now).expect("Enqueuing time");
+            }, InterruptType::AnyEdge)
+                .expect("Edge handler");
+        }
+
+        UltrasonicSensor { tx: bioreactor_trig, rx: bioreactor_rx }
+    };
 
     let mut delay = delay::Ets;
-
-    let (mut clearwater_tx, clearwater_rx) = unsafe { CLEARWATER_QUEUE.split() };
-
-    unsafe {
-        clearwater_echo.into_subscribed(move ||{
-            let now = EspSystemTime {}.now();
-            clearwater_tx.enqueue(now).expect("Enqueuing time");
-        }, InterruptType::AnyEdge)
-            .expect("Edge handler");
-    }
-
-    let mut clearwater_sensor = UltrasonicSensor { tx: clearwater_trig, rx: clearwater_rx };
 
     // Just let things settle
     delay.delay_ms(10u8);
     info!("Starting distance");
-
-    let mut publish_clear_tank = move |distance: f32| {
-        debug!("Publishing to mqtt");
-
-        mqtt_client.publish(
-            "greywater/clean-tank",
-            QoS::AtMostOnce,
-            false,
-            format!("{{ \"raw_distance\": {} }}", distance).as_bytes(),
-        ).unwrap();
-
-        debug!("done publishing")
-    };
 
     let mut filter: Filter<f32, U5> = Filter::new();
 
@@ -124,7 +128,7 @@ fn main() -> Result<()> {
         let distance = filter.median();
 
         info!("Median: {}", distance);
-        publish_clear_tank(distance)
+        publisher.publish_clear_tank(distance).unwrap();
     }).expect("Periodic timer setup");
 
     periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
@@ -163,6 +167,47 @@ impl UltrasonicSensor {
         debug!("Raw: {}", raw);
 
         raw
+    }
+}
+
+struct SensorDataPublisher {
+    mqtt_client: EspMqttClient<ConnState<MessageImpl, EspError>>,
+    listener_handle: std::thread::JoinHandle<()>
+}
+
+impl SensorDataPublisher {
+    fn connect(address: &str, config: &MqttClientConfiguration) -> Result<Self> {
+        let (mqtt_client, mut mqtt_conn) =
+            EspMqttClient::new_with_conn(address, config)?;
+
+        let listener_handle = std::thread::spawn(move || {
+            debug!("MQTT Listening for messages");
+
+            while let Some(msg) = mqtt_conn.next() {
+                match msg {
+                    Err(e) => debug!("MQTT Message ERROR: {}", e),
+                    Ok(msg) => debug!("MQTT Message: {:?}", msg),
+                }
+            }
+
+            debug!("MQTT connection loop exit");
+        });
+
+        Ok(SensorDataPublisher { mqtt_client, listener_handle })
+    }
+
+    fn publish_clear_tank(&mut self, distance: f32) -> Result<u32> {
+        debug!("Publishing to mqtt");
+
+        let result = self.mqtt_client.publish(
+            "greywater/clean-tank",
+            QoS::AtMostOnce,
+            false,
+            format!("{{ \"raw_distance\": {} }}", distance).as_bytes(),
+        )?;
+
+        debug!("done publishing");
+        Ok(result)
     }
 }
 
