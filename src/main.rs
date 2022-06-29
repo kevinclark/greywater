@@ -118,21 +118,32 @@ fn main() -> Result<()> {
     delay.delay_ms(10u8);
     info!("Starting distance");
 
-    let mut filter: Filter<f32, U5> = Filter::new();
+    let mut clear_filter: Filter<f32, U5> = Filter::new();
+    let mut bioreactor_filter: Filter<f32, U5> = Filter::new();
 
     let mut periodic = EspTimerService::new().expect("Setting timer service").timer(move || {
+        debug!("Sampling");
+
         for _ in 0..5 {
-            filter.consume(clearwater_sensor.distance_in_cms());
+            debug!("Consuming");
+            clear_filter.consume(clearwater_sensor.distance_in_cms());
+            bioreactor_filter.consume(bioreactor_sensor.distance_in_cms());
             delay.delay_ms(100u8);
         }
 
-        let distance = filter.median();
+        debug!("Checking median");
+        let clear_distance = clear_filter.median();
+        let bioreactor_distance = bioreactor_filter.median();
 
-        info!("Median: {}", distance);
-        publisher.publish_clear_tank(distance).unwrap();
+        info!("Clear Tank: {}", clear_distance);
+        info!("Bioreactor Tank: {}", bioreactor_distance);
+        publisher.publish_clear_tank(clear_distance).unwrap();
+        publisher.publish_bioreactor(bioreactor_distance).unwrap();
     }).expect("Periodic timer setup");
 
     periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
+
+    debug!("Timer scheduled");
 
     loop { }
 
