@@ -1,43 +1,45 @@
 use std::sync::Arc;
 use std::time::*;
 
-use embedded_svc::mqtt::client::MessageId;
-use embedded_svc::mqtt::client::MessageImpl;
-use embedded_svc::mqtt::client::utils::ConnState;
+use embedded_hal::{
+    prelude::*,
+    digital::v2::*,
+    blocking::delay::DelayUs
+};
+
+use esp_idf_hal::{
+    prelude::*,
+    gpio::*,
+    delay
+};
+
+use embedded_svc::{
+    ipv4,
+    mqtt::client::{Connection, MessageId, MessageImpl, utils::ConnState, Publish, QoS},
+    ping::Ping,
+    sys_time::SystemTime,
+    timer::*,
+    wifi::*
+};
+
+use esp_idf_svc::{
+    mqtt::client::*,
+    netif::*,
+    nvs::*,
+    ping,
+    sysloop::*,
+    systime::EspSystemTime,
+    timer::*,
+    wifi::*
+};
+
 use esp_idf_sys::EspError;
-use heapless::spsc::Consumer;
-use log::*;
+
 use anyhow::{bail, Result};
-
-use embedded_hal::prelude::*;
-use embedded_hal::digital::v2::*;
-use embedded_hal::blocking::delay::DelayUs;
-
-use esp_idf_hal::prelude::*;
-use esp_idf_hal::gpio::*;
-use esp_idf_hal::delay;
-
-
-use embedded_svc::sys_time::SystemTime;
-use embedded_svc::timer::*;
-use embedded_svc::ipv4;
-use embedded_svc::ping::Ping;
-use embedded_svc::wifi::*;
-use embedded_svc::mqtt::client::{Connection, Publish, QoS};
-
-
-use esp_idf_svc::systime::EspSystemTime;
-use esp_idf_svc::timer::*;
-use esp_idf_svc::netif::*;
-use esp_idf_svc::nvs::*;
-use esp_idf_svc::ping;
-use esp_idf_svc::sysloop::*;
-use esp_idf_svc::wifi::*;
-use esp_idf_svc::mqtt::client::*;
-
 use generic_array::typenum::U5;
+use heapless::spsc::{Queue, Consumer};
+use log::*;
 use median::stack::Filter;
-use heapless::spsc::Queue;
 
 const SSID: &str = env!("GREYWATER_WIFI_SSID");
 const PASS: &str = env!("GREYWATER_WIFI_PASS");
