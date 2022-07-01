@@ -113,6 +113,11 @@ fn main() -> Result<()> {
 
     debug!("Timer scheduled");
 
+    loop_forever()
+}
+
+#[allow(dead_code, unreachable_code)]
+fn loop_forever() -> Result<()> {
     loop { }
 
     Ok(())
@@ -181,6 +186,7 @@ impl UltrasonicSensor {
     }
 }
 
+#[allow(dead_code)] // The listener_handle just needs to hold the thread reference
 struct SensorDataPublisher {
     mqtt_client: EspMqttClient<ConnState<MessageImpl, EspError>>,
     listener_handle: std::thread::JoinHandle<()>
