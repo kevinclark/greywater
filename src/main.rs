@@ -99,8 +99,14 @@ fn main() -> Result<()> {
 
         info!("Clear Tank: {}", clear_distance);
         info!("Bioreactor Tank: {}", bioreactor_distance);
-        publisher.publish_clear_tank(clear_distance).unwrap();
-        publisher.publish_bioreactor(bioreactor_distance).unwrap();
+
+        if let Err(err) = publisher.publish_clear_tank(clear_distance) {
+            error!("Unable to publish clear tank distance: {}", err);
+        }
+
+        if let Err(err) = publisher.publish_bioreactor(bioreactor_distance) {
+            error!("Unable to publish bioreactor distance: {}", err);
+        }
     }).expect("Periodic timer setup");
 
     periodic.every(Duration::from_secs(10)).expect("Schedule sampling");
@@ -123,21 +129,21 @@ macro_rules! ultrasonic_sensor {
 
             let trigger_pin = $trigger_pin
                 .into_output()
-                .unwrap()
+                .expect("Setting trigger pin as output")
                 .degrade();
 
             let echo_pin = $echo_pin
                 .into_input()
-                .unwrap()
+                .expect("Setting echo pin as input")
                 .into_pull_down()
-                .unwrap();
+                .expect("Enabling echo pin pull down");
 
             unsafe {
                 echo_pin.into_subscribed(move ||{
                     let now = EspSystemTime {}.now();
                     tx.enqueue(now).expect("Enqueuing time");
                 }, InterruptType::AnyEdge)
-                    .expect("Edge handler");
+                    .expect("Setting edge interrupt for echo pin");
             }
 
             UltrasonicSensor { trigger_pin, response }
