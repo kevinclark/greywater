@@ -58,43 +58,44 @@ fn main() -> Result<()> {
         ..Default::default()
     })?;
 
-    let (mut clearwater_tx, clearwater_rx) = unsafe { CLEAN_TANK_QUEUE.split() };
-    let (mut bioreactor_tx, bioreactor_rx) = unsafe { BIOREACTOR_TANK_QUEUE.split() };
-
-
     let peripherals = Peripherals::take().expect("Peripheral init");
 
     let mut clearwater_sensor = {
-        let clearwater_trig = peripherals.pins.gpio0
+        let (mut tx, response) = unsafe { CLEAN_TANK_QUEUE.split() };
+
+        let trigger_pin = peripherals.pins.gpio0
             .into_output()
             .unwrap()
             .degrade();
 
-        let clearwater_echo = peripherals.pins.gpio1
+        let echo_pin = peripherals.pins.gpio1
             .into_input()
             .unwrap()
             .into_pull_down()
             .unwrap();
 
         unsafe {
-            clearwater_echo.into_subscribed(move ||{
+            echo_pin.into_subscribed(move ||{
                 let now = EspSystemTime {}.now();
-                clearwater_tx.enqueue(now).expect("Enqueuing time");
+                tx.enqueue(now).expect("Enqueuing time");
             }, InterruptType::AnyEdge)
                 .expect("Edge handler");
         }
 
-        UltrasonicSensor { tx: clearwater_trig, rx: clearwater_rx }
+        UltrasonicSensor { trigger_pin, response }
     };
 
     let mut bioreactor_sensor = {
+        let (mut tx, response) = unsafe { BIOREACTOR_TANK_QUEUE.split() };
 
-        let bioreactor_trig = peripherals.pins.gpio2
+
+
+        let trigger_pin = peripherals.pins.gpio2
             .into_output()
             .unwrap()
             .degrade();
 
-        let bioreactor_echo = peripherals.pins.gpio3
+        let echo_pin = peripherals.pins.gpio3
             .into_input()
             .unwrap()
             .into_pull_down()
@@ -102,14 +103,14 @@ fn main() -> Result<()> {
 
 
         unsafe {
-            bioreactor_echo.into_subscribed(move ||{
+            echo_pin.into_subscribed(move ||{
                 let now = EspSystemTime {}.now();
-                bioreactor_tx.enqueue(now).expect("Enqueuing time");
+                tx.enqueue(now).expect("Enqueuing time");
             }, InterruptType::AnyEdge)
                 .expect("Edge handler");
         }
 
-        UltrasonicSensor { tx: bioreactor_trig, rx: bioreactor_rx }
+        UltrasonicSensor { trigger_pin, response }
     };
 
     let mut delay = delay::Ets;
@@ -151,26 +152,26 @@ fn main() -> Result<()> {
 }
 
 struct UltrasonicSensor {
-    tx: GpioPin<Output>,
-    rx: Consumer<'static, Duration, 2>
+    trigger_pin: GpioPin<Output>,
+    response: Consumer<'static, Duration, 2>
 }
 
 impl UltrasonicSensor {
     fn distance_in_cms(&mut self) -> f32 {
         debug!("Starting trigger pulse");
-        self.tx.set_high().expect("Starting trigger pulse");
+        self.trigger_pin.set_high().expect("Starting trigger pulse");
         delay::Ets.delay_us(10u8);
-        self.tx.set_low().expect("Ending trigger pulse");
+        self.trigger_pin.set_low().expect("Ending trigger pulse");
         debug!("Pulse done.");
 
-        let mut blocking_deque = move || {
-            while !self.rx.ready() {}
-            unsafe { self.rx.dequeue_unchecked() }
+        let mut blocking_dequeue = move || {
+            while !self.response.ready() {}
+            unsafe { self.response.dequeue_unchecked() }
         };
 
-        let start = blocking_deque();
+        let start = blocking_dequeue();
         debug!("Got start: {:?}", start);
-        let end = blocking_deque();
+        let end = blocking_dequeue();
         debug!("Got end: {:?}", end);
 
         let raw = (end - start).as_micros() as f32 / 58.0;
