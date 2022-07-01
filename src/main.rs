@@ -60,58 +60,17 @@ fn main() -> Result<()> {
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
-    let mut clearwater_sensor = {
-        let (mut tx, response) = unsafe { CLEAN_TANK_QUEUE.split() };
+    let mut clearwater_sensor =
+        ultrasonic_sensor!(
+            peripherals.pins.gpio0,
+            peripherals.pins.gpio1,
+            CLEAN_TANK_QUEUE);
 
-        let trigger_pin = peripherals.pins.gpio0
-            .into_output()
-            .unwrap()
-            .degrade();
-
-        let echo_pin = peripherals.pins.gpio1
-            .into_input()
-            .unwrap()
-            .into_pull_down()
-            .unwrap();
-
-        unsafe {
-            echo_pin.into_subscribed(move ||{
-                let now = EspSystemTime {}.now();
-                tx.enqueue(now).expect("Enqueuing time");
-            }, InterruptType::AnyEdge)
-                .expect("Edge handler");
-        }
-
-        UltrasonicSensor { trigger_pin, response }
-    };
-
-    let mut bioreactor_sensor = {
-        let (mut tx, response) = unsafe { BIOREACTOR_TANK_QUEUE.split() };
-
-
-
-        let trigger_pin = peripherals.pins.gpio2
-            .into_output()
-            .unwrap()
-            .degrade();
-
-        let echo_pin = peripherals.pins.gpio3
-            .into_input()
-            .unwrap()
-            .into_pull_down()
-            .unwrap();
-
-
-        unsafe {
-            echo_pin.into_subscribed(move ||{
-                let now = EspSystemTime {}.now();
-                tx.enqueue(now).expect("Enqueuing time");
-            }, InterruptType::AnyEdge)
-                .expect("Edge handler");
-        }
-
-        UltrasonicSensor { trigger_pin, response }
-    };
+    let mut bioreactor_sensor =
+        ultrasonic_sensor!(
+            peripherals.pins.gpio2,
+            peripherals.pins.gpio3,
+            BIOREACTOR_TANK_QUEUE);
 
     let mut delay = delay::Ets;
 
@@ -149,6 +108,39 @@ fn main() -> Result<()> {
     loop { }
 
     Ok(())
+}
+
+// This is necessarily a macro because the pins are different *types*
+// with no common traits that would let me write a more generic helper
+// function or struct. So that's cool...
+#[macro_export]
+macro_rules! ultrasonic_sensor {
+    ($trigger_pin:expr, $echo_pin:expr, $queue:expr) => {
+        {
+            let (mut tx, response) = unsafe { $queue.split() };
+
+            let trigger_pin = $trigger_pin
+                .into_output()
+                .unwrap()
+                .degrade();
+
+            let echo_pin = $echo_pin
+                .into_input()
+                .unwrap()
+                .into_pull_down()
+                .unwrap();
+
+            unsafe {
+                echo_pin.into_subscribed(move ||{
+                    let now = EspSystemTime {}.now();
+                    tx.enqueue(now).expect("Enqueuing time");
+                }, InterruptType::AnyEdge)
+                    .expect("Edge handler");
+            }
+
+            UltrasonicSensor { trigger_pin, response }
+        }
+    };
 }
 
 struct UltrasonicSensor {
