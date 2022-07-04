@@ -56,32 +56,38 @@ fn main() -> Result<()> {
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
-    let di = ssd1306::I2CDisplayInterface::new(i2c::Master::<i2c::I2C0, _, _>::new(
-            peripherals.i2c0,
-            i2c::MasterPins { sda: peripherals.pins.gpio4, scl: peripherals.pins.gpio5 },
-            <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into())
-    )?);
-
-    let mut display = ssd1306::Ssd1306::new(
-        di,
-        ssd1306::size::DisplaySize128x32,
-        ssd1306::rotation::DisplayRotation::Rotate0
-    ).into_terminal_mode();
-
-    display.init().unwrap();
-    display.clear().unwrap();
-
+    // Clearwater: GPIO 0 and 1
     let mut clearwater_sensor =
         ultrasonic_sensor!(
             peripherals.pins.gpio0,
             peripherals.pins.gpio1,
             CLEAN_TANK_QUEUE);
 
+    // Bioreactor: GPIO 2 and 3
     let mut bioreactor_sensor =
         ultrasonic_sensor!(
             peripherals.pins.gpio2,
             peripherals.pins.gpio3,
             BIOREACTOR_TANK_QUEUE);
+
+    // Display: GPIO 4 and 5
+    let mut display = {
+        let di = ssd1306::I2CDisplayInterface::new(i2c::Master::<i2c::I2C0, _, _>::new(
+                peripherals.i2c0,
+                i2c::MasterPins { sda: peripherals.pins.gpio4, scl: peripherals.pins.gpio5 },
+                <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into())
+        )?);
+
+        let mut display = ssd1306::Ssd1306::new(
+            di,
+            ssd1306::size::DisplaySize128x32,
+            ssd1306::rotation::DisplayRotation::Rotate0
+        ).into_terminal_mode();
+
+        display.init().expect("Initializing display");
+        display.clear().expect("Clearing display");
+        display
+    };
 
     let mut delay = delay::Ets;
 
