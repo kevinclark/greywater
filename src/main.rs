@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::*;
+use core::fmt::Write;
 
 use embedded_hal::{
     prelude::*,
@@ -10,7 +11,7 @@ use embedded_hal::{
 use esp_idf_hal::{
     prelude::*,
     gpio::*,
-    delay
+    delay, i2c
 };
 
 use embedded_svc::{
@@ -40,6 +41,7 @@ use generic_array::typenum::U5;
 use heapless::spsc::{Queue, Consumer};
 use log::*;
 use median::stack::Filter;
+use ssd1306::mode::DisplayConfig;
 
 const SSID: &str = env!("GREYWATER_WIFI_SSID");
 const PASS: &str = env!("GREYWATER_WIFI_PASS");
@@ -52,15 +54,22 @@ fn main() -> Result<()> {
 
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    let _wifi = init_wifi();
-
-    let mut publisher = SensorDataPublisher::connect(MQTT, &MqttClientConfiguration {
-        client_id: Some("greywater"),
-
-        ..Default::default()
-    })?;
-
     let peripherals = Peripherals::take().expect("Peripheral init");
+
+    let di = ssd1306::I2CDisplayInterface::new(i2c::Master::<i2c::I2C0, _, _>::new(
+            peripherals.i2c0,
+            i2c::MasterPins { sda: peripherals.pins.gpio4, scl: peripherals.pins.gpio5 },
+            <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into())
+    )?);
+
+    let mut display = ssd1306::Ssd1306::new(
+        di,
+        ssd1306::size::DisplaySize128x32,
+        ssd1306::rotation::DisplayRotation::Rotate0
+    ).into_terminal_mode();
+
+    display.init().unwrap();
+    display.clear().unwrap();
 
     let mut clearwater_sensor =
         ultrasonic_sensor!(
@@ -75,6 +84,16 @@ fn main() -> Result<()> {
             BIOREACTOR_TANK_QUEUE);
 
     let mut delay = delay::Ets;
+
+    write!(display, "Starting wifi...")?;
+    let _wifi = init_wifi();
+
+    let mut publisher = SensorDataPublisher::connect(MQTT, &MqttClientConfiguration {
+        client_id: Some("greywater"),
+
+        ..Default::default()
+    })?;
+
 
     // Just let things settle
     delay.delay_ms(10u8);
@@ -99,6 +118,9 @@ fn main() -> Result<()> {
 
         info!("Clear Tank: {}", clear_distance);
         info!("Bioreactor Tank: {}", bioreactor_distance);
+        display.clear().unwrap();
+        write!(display, "Clear Tank: {:.0}cm\n\n", clear_distance).unwrap();
+        write!(display, "Bioreactor: {:.0}cm\n", bioreactor_distance).unwrap();
 
         if let Err(err) = publisher.publish_clear_tank(clear_distance) {
             error!("Unable to publish clear tank distance: {}", err);
