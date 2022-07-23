@@ -13,11 +13,11 @@ use esp_idf_hal::{
 use log::*;
 use heapless::spsc::Consumer;
 
-// This is necessarily a macro because the pins are different *types*
+// NOTE: This is necessarily a macro because the pins are different *types*
 // with no common traits that would let me write a more generic helper
 // function or struct. So that's cool...
 #[macro_export]
-macro_rules! ultrasonic_sensor {
+macro_rules! hc_sr04 {
     ($trigger_pin:expr, $echo_pin:expr, $queue:expr) => {
         {
             let (mut tx, response) = unsafe { $queue.split() };
@@ -41,19 +41,20 @@ macro_rules! ultrasonic_sensor {
                     .expect("Setting edge interrupt for echo pin");
             }
 
-            $crate::sensors::UltrasonicSensor::new(trigger_pin, response)
+            $crate::sensors::HcSr04::new(trigger_pin, response)
         }
     };
 }
 
-pub struct UltrasonicSensor {
+// Driver for any HcSr04 compatible device (RCWL-1601, US-100 (without UART)).
+pub struct HcSr04 {
     trigger_pin: GpioPin<Output>,
     response: Consumer<'static, Duration, 2>
 }
 
-impl UltrasonicSensor {
-    pub fn new(trigger_pin: GpioPin<Output>, response: Consumer<'static, Duration, 2>) -> UltrasonicSensor {
-        UltrasonicSensor { trigger_pin, response }
+impl HcSr04 {
+    pub fn new(trigger_pin: GpioPin<Output>, response: Consumer<'static, Duration, 2>) -> HcSr04 {
+        HcSr04 { trigger_pin, response }
     }
 
     pub fn distance_in_cms(&mut self) -> f32 {

@@ -30,7 +30,7 @@ use log::*;
 use median::stack::Filter;
 use ssd1306::mode::DisplayConfig;
 
-use greywater::{comms, ultrasonic_sensor};
+use greywater::{comms, hc_sr04};
 
 
 const SSID: &str = env!("GREYWATER_WIFI_SSID");
@@ -48,23 +48,23 @@ fn main() -> Result<()> {
 
     // Clearwater: GPIO 0 and 1
     let mut clearwater_sensor =
-        ultrasonic_sensor!(
+        hc_sr04!(
             peripherals.pins.gpio0,
             peripherals.pins.gpio1,
             CLEAN_TANK_QUEUE);
 
     // Bioreactor: GPIO 2 and 3
     let mut bioreactor_sensor =
-        ultrasonic_sensor!(
+        hc_sr04!(
             peripherals.pins.gpio2,
             peripherals.pins.gpio3,
             BIOREACTOR_TANK_QUEUE);
 
-    // Display: GPIO 4 and 5
+    // Display: GPIO 8 and 9
     let mut display = {
         let di = ssd1306::I2CDisplayInterface::new(i2c::Master::<i2c::I2C0, _, _>::new(
                 peripherals.i2c0,
-                i2c::MasterPins { sda: peripherals.pins.gpio4, scl: peripherals.pins.gpio5 },
+                i2c::MasterPins { sda: peripherals.pins.gpio8, scl: peripherals.pins.gpio9 },
                 <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into())
         )?);
 
