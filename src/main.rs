@@ -5,19 +5,16 @@ use embedded_hal::prelude::*;
 
 use esp_idf_hal::{
     prelude::*,
-    gpio::*,
-    delay, i2c
+    delay, i2c, serial
 };
 
 use embedded_svc::{
     mqtt::client::{Connection, MessageId, MessageImpl, utils::ConnState, Publish, QoS},
-    sys_time::SystemTime,
     timer::*,
 };
 
 use esp_idf_svc::{
     mqtt::client::*,
-    systime::EspSystemTime,
     timer::*,
 };
 
@@ -25,20 +22,17 @@ use esp_idf_sys::EspError;
 
 use anyhow::Result;
 use generic_array::typenum::U5;
-use heapless::spsc::Queue;
+
 use log::*;
 use median::stack::Filter;
 use ssd1306::mode::DisplayConfig;
 
-use greywater::{comms, hc_sr04};
+use greywater::{comms, sensors::{Us100, UltrasonicSensor}};
 
 
 const SSID: &str = env!("GREYWATER_WIFI_SSID");
 const PASS: &str = env!("GREYWATER_WIFI_PASS");
 const MQTT: &str = env!("GREYWATER_MQTT");
-
-static mut CLEAN_TANK_QUEUE: Queue<Duration, 2> = Queue::new();
-static mut BIOREACTOR_TANK_QUEUE: Queue<Duration, 2> = Queue::new();
 
 fn main() -> Result<()> {
 
@@ -46,25 +40,50 @@ fn main() -> Result<()> {
 
     let peripherals = Peripherals::take().expect("Peripheral init");
 
+    let pins = peripherals.pins;
+
     // Clearwater: GPIO 0 and 1
-    let mut clearwater_sensor =
-        hc_sr04!(
-            peripherals.pins.gpio0,
-            peripherals.pins.gpio1,
-            CLEAN_TANK_QUEUE);
+    let mut clearwater_sensor = Us100::new({
+        let config = serial::config::Config::default().baudrate(Hertz(9600));
+
+        let conn: serial::Serial<serial::UART0, _, _> = serial::Serial::new(
+            peripherals.uart0,
+            serial::Pins {
+                tx: pins.gpio0,
+                rx: pins.gpio1,
+                cts: None,
+                rts: None
+            },
+            config
+        ).expect("Setting up serial connection to us-100");
+
+        conn
+    });
+
 
     // Bioreactor: GPIO 2 and 3
-    let mut bioreactor_sensor =
-        hc_sr04!(
-            peripherals.pins.gpio2,
-            peripherals.pins.gpio3,
-            BIOREACTOR_TANK_QUEUE);
+    let mut bioreactor_sensor = Us100::new({
+        let config = serial::config::Config::default().baudrate(Hertz(9600));
+
+        let conn: serial::Serial<serial::UART1, _, _> = serial::Serial::new(
+            peripherals.uart1,
+            serial::Pins {
+                tx: pins.gpio2,
+                rx: pins.gpio3,
+                cts: None,
+                rts: None
+            },
+            config
+        ).expect("Setting up serial connection to us-100");
+
+        conn
+    });
 
     // Display: GPIO 8 and 9
     let mut display = {
         let di = ssd1306::I2CDisplayInterface::new(i2c::Master::<i2c::I2C0, _, _>::new(
                 peripherals.i2c0,
-                i2c::MasterPins { sda: peripherals.pins.gpio8, scl: peripherals.pins.gpio9 },
+                i2c::MasterPins { sda: pins.gpio8, scl: pins.gpio9 },
                 <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into())
         )?);
 
@@ -102,9 +121,11 @@ fn main() -> Result<()> {
         debug!("Sampling");
 
         for _ in 0..5 {
-            debug!("Consuming");
+            debug!("Consuming from clear");
             clear_filter.consume(clearwater_sensor.distance_in_cms());
+            debug!("Consuming from bioreactor");
             bioreactor_filter.consume(bioreactor_sensor.distance_in_cms());
+            debug!("Settling.");
             delay.delay_ms(100u8);
         }
 
