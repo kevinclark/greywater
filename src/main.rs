@@ -5,7 +5,7 @@ use embedded_hal::prelude::*;
 
 use esp_idf_hal::{
     prelude::*,
-    delay, i2c, serial
+    delay, i2c, serial::{Serial, config::Config as SerialConfig, Pins}
 };
 
 use embedded_svc::{
@@ -43,41 +43,33 @@ fn main() -> Result<()> {
     let pins = peripherals.pins;
 
     // Clearwater: GPIO 0 and 1
-    let mut clearwater_sensor = Us100::new({
-        let config = serial::config::Config::default().baudrate(Hertz(9600));
-
-        let conn: serial::Serial<serial::UART0, _, _> = serial::Serial::new(
+    let mut clearwater_sensor = Us100::new(
+        Serial::new(
             peripherals.uart0,
-            serial::Pins {
+            Pins {
                 tx: pins.gpio0,
                 rx: pins.gpio1,
                 cts: None,
                 rts: None
             },
-            config
-        ).expect("Setting up serial connection to us-100");
-
-        conn
-    });
+            SerialConfig::default().baudrate(Hertz(9600))
+        ).expect("Setting up serial connection to us-100")
+    );
 
 
     // Bioreactor: GPIO 2 and 3
-    let mut bioreactor_sensor = Us100::new({
-        let config = serial::config::Config::default().baudrate(Hertz(9600));
-
-        let conn: serial::Serial<serial::UART1, _, _> = serial::Serial::new(
+    let mut bioreactor_sensor = Us100::new(
+        Serial::new(
             peripherals.uart1,
-            serial::Pins {
+            Pins {
                 tx: pins.gpio2,
                 rx: pins.gpio3,
                 cts: None,
                 rts: None
             },
-            config
-        ).expect("Setting up serial connection to us-100");
-
-        conn
-    });
+            SerialConfig::default().baudrate(Hertz(9600))
+        ).expect("Setting up serial connection to us-100")
+    );
 
     // Display: GPIO 8 and 9
     let mut display = {
