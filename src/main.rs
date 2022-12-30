@@ -46,6 +46,12 @@ fn main() -> Result<()> {
 
     esp_idf_svc::log::EspLogger::initialize_default();
 
+    let mut delay = delay::Ets;
+
+    // Let the system come up for a moment before setting up peripherals.
+    // GPIO 0-3 seem to go pullup immediately, and if we jump in too fast the sensors get wonky.
+    delay.delay_ms(2000u16);
+
     let peripherals = Peripherals::take().expect("Peripheral init");
 
     let pins = peripherals.pins;
@@ -73,8 +79,6 @@ fn main() -> Result<()> {
         display.clear().expect("Clearing display");
         display
     };
-
-    let mut delay = delay::Ets;
 
     write!(display, "Starting wifi...")?;
     let _wifi = comms::connect_to_wifi(SSID, PASS);
