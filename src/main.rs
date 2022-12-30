@@ -4,17 +4,21 @@ use core::fmt::Write;
 use embedded_hal::prelude::*;
 
 use esp_idf_hal::{
+    delay,
+    gpio::*,
+    i2c,
     prelude::*,
-    delay, i2c, serial::{Serial, config::Config as SerialConfig, Pins}
 };
 
 use embedded_svc::{
     mqtt::client::{Connection, MessageId, MessageImpl, utils::ConnState, Publish, QoS},
+    sys_time::SystemTime,
     timer::*,
 };
 
 use esp_idf_svc::{
     mqtt::client::*,
+    systime::EspSystemTime,
     timer::*,
 };
 
@@ -22,17 +26,21 @@ use esp_idf_sys::EspError;
 
 use anyhow::Result;
 use generic_array::typenum::U5;
+use heapless::spsc::Queue;
 
 use log::*;
 use median::stack::Filter;
 use ssd1306::mode::DisplayConfig;
 
-use greywater::{comms, sensors::{Us100, UltrasonicSensor}};
+use greywater::{comms, hc_sr04, sensors::UltrasonicSensor};
 
 
 const SSID: &str = env!("GREYWATER_WIFI_SSID");
 const PASS: &str = env!("GREYWATER_WIFI_PASS");
 const MQTT: &str = env!("GREYWATER_MQTT");
+
+static mut CLEAN_TANK_QUEUE: Queue<Duration, 2> = Queue::new();
+static mut BIOREACTOR_TANK_QUEUE: Queue<Duration, 2> = Queue::new();
 
 fn main() -> Result<()> {
 
@@ -43,39 +51,15 @@ fn main() -> Result<()> {
     let pins = peripherals.pins;
 
     // Clearwater: GPIO 0 and 1
-    let mut clearwater_sensor = Us100::new(
-        Serial::new(
-            peripherals.uart0,
-            Pins {
-                tx: pins.gpio0,
-                rx: pins.gpio1,
-                cts: None,
-                rts: None
-            },
-            SerialConfig::default().baudrate(Hertz(9600))
-        ).expect("Setting up serial connection to us-100")
-    );
+    let mut clearwater_sensor = hc_sr04!(pins.gpio0, pins.gpio1, CLEAN_TANK_QUEUE);
+    // Clearwater: GPIO 2 and 3
+    let mut bioreactor_sensor = hc_sr04!(pins.gpio2, pins.gpio3, BIOREACTOR_TANK_QUEUE);
 
-
-    // Bioreactor: GPIO 2 and 3
-    let mut bioreactor_sensor = Us100::new(
-        Serial::new(
-            peripherals.uart1,
-            Pins {
-                tx: pins.gpio2,
-                rx: pins.gpio3,
-                cts: None,
-                rts: None
-            },
-            SerialConfig::default().baudrate(Hertz(9600))
-        ).expect("Setting up serial connection to us-100")
-    );
-
-    // Display: GPIO 8 and 9
+    // Display: GPIO 6 and 7
     let mut display = {
         let di = ssd1306::I2CDisplayInterface::new(i2c::Master::<i2c::I2C0, _, _>::new(
                 peripherals.i2c0,
-                i2c::MasterPins { sda: pins.gpio8, scl: pins.gpio9 },
+                i2c::MasterPins { sda: pins.gpio6, scl: pins.gpio7 },
                 <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into())
         )?);
 
@@ -128,8 +112,8 @@ fn main() -> Result<()> {
         info!("Clear Tank: {}", clear_distance);
         info!("Bioreactor Tank: {}", bioreactor_distance);
         display.clear().unwrap();
-        write!(display, "Clear Tank: {:.0}cm\n\n", clear_distance).unwrap();
-        write!(display, "Bioreactor: {:.0}cm\n", bioreactor_distance).unwrap();
+        write!(display, "Clear: {:.0}cm\n\n", clear_distance).unwrap();
+        write!(display, "Reactor: {:.0}cm\n", bioreactor_distance).unwrap();
 
         if let Err(err) = publisher.publish_clear_tank(clear_distance) {
             error!("Unable to publish clear tank distance: {}", err);
